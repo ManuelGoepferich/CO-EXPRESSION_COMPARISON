@@ -1,0 +1,76 @@
+require(biomaRt)
+require(Biobase)
+require(clusterProfiler)
+require(ReactomePA)
+require(biclust)
+
+## NOTES:
+# Please, change organism to human, OrgDb = 'org.Mm.eg.db' is for mouse
+# The final result will be a list of subclusters
+
+## correlation Matrix
+getCorMatrix <- function(amatrix, bmatrix){
+  cormatrix <- matrix(NA, ncol = nrow(amatrix), nrow = nrow(bmatrix))
+  
+  for(n in 1:nrow(amatrix)){
+    for(m in 1:nrow(bmatrix))
+      
+      cormatrix[m,n]  <- cor(amatrix[n,], bmatrix[m,], method = 'pearson')
+  }
+  rownames(cormatrix) <- rownames(bmatrix)
+  colnames(cormatrix) <- rownames(amatrix)
+  return(cormatrix)
+}
+
+## main Function
+# ncSet is the matrix of lincRNAs
+# pcSet is the matrix of protein-coding genes
+
+corMatrix <- getCorMatrix(ncSet, pcSet)
+  rankMatrix <- apply(corMatrix, 2, function(x){ rownames(corMatrix)[order(x, decreasing = TRUE)] })
+  coeffMatrix <- apply(corMatrix, 2, function(x){ x[order(x, decreasing = TRUE)] })
+  
+  assList <- list() 
+  for(n in seq_len(ncol(rankMatrix))){
+    gPromise <- coeffMatrix[,n]
+    names(gPromise) <- rankMatrix[,n]
+    bitter <- bitr(names(gPromise), "ENSEMBL", "ENTREZID", OrgDb = 'org.Mm.eg.db')
+    m <- match(bitter$ENSEMBL, names(gPromise))
+    entrezid <- gPromise[m]
+    names(entrezid) <- bitter$ENTREZID
+    gseaRes <- gsePathway(entrezid, nPerm = 1000, organism = 'mouse', pvalueCutoff = 0.05)
+    assList[[n]] <- gseaRes  
+    
+    #gseaRes <- gseGO(bitter, nPerm = 1000, keytype = "ENTREZID", OrgDb = 'org.Mm.eg.db')
+   # gseaRes <- gseGO(gPromise, nPerm = 1000, keytype = "ENSEMBL", OrgDb = 'org.Mm.eg.db', pvalueCutoff = 0.001)
+    # gseK <- gseKEGG(gPromise, nPerm = 1000, keyType = "ENSEMBL", OrgDb = 'org.Mm.eg.db')
+  }
+  
+  termUniverse <- lapply(assList, function(x){ x@result$Description } )
+  termRef <- unique(unlist(termUniverse))
+  
+  assMatrix <- matrix(0, ncol = length(candidates), nrow = length(termRef))
+  rownames(assMatrix) <- termRef
+  colnames(assMatrix) <- candidates
+  
+  for(k in seq_len(ncol(assMatrix))){
+    terms <- assList[[k]]@result$Description
+    padj <- -log10(assList[[k]]@result$p.adjust)
+    index2 <- match(terms, termRef)
+    index2 <- index2[!is.na(index2)]
+    assMatrix[index2 ,k] <- padj                 
+  }
+  
+  logMatrix <- assMatrix > 0
+  bics <- biclust(logMatrix, method=BCrepBimax(), minr=2, minc=2, number= 5, maxc=5)
+  
+  if(bics@Number < 1) stop('No subcluster was found')
+  
+  subCList <- list()
+  subProx <- list()
+  for(t in seq_len(bics@Number)){
+    subCList[[t]] <- assMatrix[bics@RowxNumber[, t], bics@NumberxCol[t,]]
+    tmpCan <- colnames(subCList[[t]])
+    # genes in proximity for each subcluster
+    
+  }
